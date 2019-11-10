@@ -41,8 +41,6 @@ iris_with_missing = iris %>%
 
 ## Problem 1
 
-Function to replace missing values in numeric and character vectors.
-
 ```{r}
 replace_na = function(x) {
   if (!(is.numeric(x) | is.character(x))) {
@@ -58,11 +56,11 @@ replace_na = function(x) {
 }
 ```
 
-Apply this function to the columns of `iris_with_missing` using a `map` statement.
 
 ```{r}
 iris_imputed = map_df(.x = iris_with_missing, ~replace_na(.x))
 ```
+
 
 ## Problem 2
 
@@ -83,15 +81,15 @@ df = tibble(
       map(pivot_longer, 
           week_1:week_8,
           names_to = "week", 
-          values_to = "observation"),
+          values_to = "observation",
+          names_prefix = "week_"),
     file = str_replace(file, "\\..*", "")
   ) %>% 
   rename(id = file)
 ```
 
-Make a spaghetti plot showing observations on each subject over time, and comment on differences between groups.
 
-It seems the treatment received by the experiment arm caused a noticeable increase in the observations. In fact, the control arm trends downward slightly over time, while the treatment arm displays a stronger, positive trend. 
+It seems the treatment received by the experimental arm has a detectable effect. The observations for the experimental arm increase sharply in the first three weeks and continue the trend at a slightly lower rate over time. The control group's observations remain consistent over time.
 
 ```{r}
 df %>% 
@@ -99,47 +97,100 @@ df %>%
   mutate(
     group = factor(str_detect(id, "con"), 
                    levels = c(TRUE, FALSE),
-                   labels = c("control", "experimental")),
-    week = str_replace(week, "week_", "")
-    ) %>% 
+                   labels = c("control", "experimental"))
+  ) %>% 
   ggplot(aes(x = week, y = observation, group = id, color = group)) +
   geom_line() +
+  geom_smooth(aes(group = group), se = FALSE) +
   labs(title = "Observations over time",
        x = "timepoint (weeks)",
        y = "observation",
        color = "study arm")
+```
 
 
+## Problem 3
 
-
-# brfss_smart2010 %>% 
-#   filter(response == "Excellent") %>% 
-#   group_by(location_abbr, year) %>% 
-#   mutate(data_value_avg = mean(data_value)) %>% 
-#   select(year, location_abbr, data_value_avg) %>% 
-#   ungroup() %>% 
-#   ggplot(aes(x = year, y = data_value_avg)) +
-#   geom_line(aes(group = location_abbr, color = location_abbr)) +
-#   theme(legend.position = "none") +
-#   labs(title = "Average BRFSS scores over time for all states",
-#        x = "Year", 
-#        y = "BRFSS score")
+```{r}
+sim_regression = function(beta_1) {
+  sim_data = tibble(
+    x1 = rnorm(30, mean = 0, sd = 1),
+    y = 2 + beta_1 * x1 + rnorm(30, 0, sqrt(50))
+  )
+  
+  ls_fit = lm(y ~ x1, data = sim_data)
+  
+  broom::tidy(ls_fit) %>% 
+    janitor::clean_names() %>% 
+    filter(term == "x1") %>%
+    select(estimate, p_value)
+}
 ```
 
 
 ```{r}
-
+sim_results = 
+  rerun(10000, sim_regression(beta_1 = 0)) %>% 
+  bind_rows()
 ```
 
 
-
+The plot below demonstrates that as the size of an effect increases, it becomes more likely that a false hypothesis will be rejected. The power of a test therefore increases with the with effect size.
 
 ```{r}
+sim_results = 
+  tibble(
+    beta_1 = 1:6
+  ) %>% 
+  mutate(
+    output_lists = map(.x = beta_1, ~rerun(10000, sim_regression(beta_1 = .x))),
+    estimate_dfs = map(output_lists, bind_rows)
+  ) %>% 
+  select(-output_lists) %>% 
+  unnest(estimate_dfs)
+```
 
+```{r}
+sim_results %>% 
+  group_by(beta_1) %>%
+  mutate(null_rejected = as.numeric(p_value < 0.05),
+         prop_rejected = mean(null_rejected)) %>% 
+  ggplot(aes(x = beta_1, y = prop_rejected)) +
+  geom_bar(stat = "identity") +
+  scale_x_continuous(breaks = 1:6) +
+  labs(title = "Proportion of rejected hypotheses by effect size",
+       x = "coefficient value", 
+       y = "percent rejected")
 ```
 
 
+When the effect size is small, the sample averages of significant estimates do not approximate the true effect size very accurately. As the true effect size increases, the averages converge to the true value. Small effects are more difficult to detect, so when the true effect is small, the larger estimates are those found to be significant on average.  
 
+```{r}
+sim_results %>% 
+  group_by(beta_1) %>% 
+  mutate(
+    null_rejected = as.numeric(p_value < 0.05),
+    avg_estimate = mean(estimate)
+  ) %>% 
+  group_by(beta_1, null_rejected) %>%
+  mutate(
+    avg_sig_estimate = mean(estimate),
+    avg_sig_estimate = replace(avg_sig_estimate, p_value >= 0.05, NA)
+  ) %>% 
+  drop_na() %>%
+  ggplot(aes(x = beta_1)) +
+  geom_line(aes(y = avg_estimate, color = "all estimates")) +
+  geom_line(aes(y = avg_sig_estimate, color = "null rejected")) +
+  scale_x_continuous(breaks = 1:6) +
+  labs(title = "True effect size vs. average estimated effect size",
+       x = "true effect size",
+       y = "average of estimated effect sizes",
+       color = "")
+```
+
+<br>
+<br>
 
 
 
